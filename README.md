@@ -4,10 +4,11 @@ Terraform module that stands up GPU-backed LLM inference on EKS: cluster, GPU
 capacity, vLLM serving, autoscaling and observability. One `terraform apply`,
 one `terraform destroy`.
 
-> **Status: work in progress.** The structure, interface and CI are in place;
-> the module bodies are being implemented. The results table below is empty on
-> purpose — I do not publish numbers I have not measured. See
-> [Roadmap](#roadmap).
+> **Status: work in progress.** The GPU nodegroup module is implemented and
+> `terraform validate` passes on the root module and the example. Serving and
+> observability are still stubs, and nothing here has been applied against a
+> live cluster yet. The results table below is empty on purpose — I do not
+> publish numbers I have not measured. See [Roadmap](#roadmap).
 
 ## Why this exists
 
@@ -130,11 +131,12 @@ the failure looks like a crash rather than a config error.
 ## Roadmap
 
 - [ ] VPC and EKS control plane via upstream modules
-- [ ] Karpenter provisioner + NVIDIA GPU Operator
+- [x] Karpenter NodePool + EC2NodeClass + NVIDIA GPU Operator
+- [ ] Apply against a live cluster and fix what breaks
 - [ ] vLLM deployment, service, HPA/KEDA
 - [ ] kube-prometheus-stack, DCGM exporter, Grafana dashboards
 - [ ] Benchmark harness and published results
-- [ ] Cost estimation output
+- [x] Cost estimation output (static table; Pricing API later)
 - [ ] Terratest coverage
 
 ## CI

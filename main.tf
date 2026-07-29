@@ -27,10 +27,11 @@ locals {
 module "gpu_nodegroup" {
   source = "./modules/gpu-nodegroup"
 
-  cluster_name   = var.cluster_name
-  instance_types = var.gpu_instance_types
-  capacity_type  = var.capacity_type
-  tags           = local.tags
+  cluster_name       = var.cluster_name
+  node_iam_role_name = var.node_iam_role_name
+  instance_types     = var.gpu_instance_types
+  capacity_type      = var.capacity_type
+  tags               = local.tags
 
   # TODO: Karpenter provisioner + NVIDIA GPU Operator.
   #       The GPU Operator installs drivers, the container toolkit and the

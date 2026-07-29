@@ -55,3 +55,8 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "node_iam_role_name" {
+  description = "IAM role assumed by Karpenter-provisioned GPU nodes."
+  type        = string
+}

@@ -12,6 +12,11 @@ module "gpu_inference" {
   cluster_name = "gpu-inference-demo"
   region       = "us-west-2"
 
+  # Karpenter tags this role onto provisioned nodes. Created by the EKS
+  # module; referenced here by name rather than ARN to match the
+  # EC2NodeClass schema.
+  node_iam_role_name = "KarpenterNodeRole-gpu-inference-demo"
+
   model_id     = "meta-llama/Llama-3.1-8B-Instruct"
   quantization = "awq"
 
