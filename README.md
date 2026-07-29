@@ -66,8 +66,12 @@ module "gpu_inference" {
 ```bash
 terraform init && terraform apply
 curl "$(terraform output -raw inference_endpoint)/v1/models"
-terraform destroy   # GPU nodes are expensive - do not leave them running
+
+bash scripts/teardown.sh   # destroy + verify nothing is still billing
 ```
+
+Read [Cost](#cost--read-before-applying) first. An idle EKS cluster still
+costs roughly $73/month.
 
 A complete example lives in [`examples/complete`](examples/complete).
 
@@ -91,6 +95,58 @@ benchmark myself** — see the note at the top.
 Method: k6 against the OpenAI-compatible endpoint, fixed prompt distribution,
 warm cache excluded from the first window. Raw output will be committed under
 `docs/benchmarks/` so the numbers can be checked rather than taken on trust.
+
+## Cost — read before applying
+
+**There is no zero-cost idle state for this stack.** An EKS cluster bills a
+flat control-plane fee whether or not a single pod is running, so "scaled to
+zero" still costs money. Only "destroyed" is free.
+
+| Component | Rate | Idle cost |
+| --- | --- | --- |
+| EKS control plane | ~$0.10/hr | **~$73/mo, always** — no scale-to-zero |
+| NAT gateway (per AZ) | ~$0.045/hr | ~$32/mo each, plus data processing |
+| GPU node, `g5.xlarge` on-demand | ~$1.00/hr | $0 when Karpenter scales to zero |
+| GPU node, `g5.xlarge` spot | ~$0.35/hr | $0 when scaled to zero |
+| EBS root volume, 200Gi gp3 | ~$16/mo per node | billed while the volume exists |
+
+Rates are US West (Oregon) and drift. Confirm against the AWS pricing pages
+before relying on them.
+
+**What scales to zero:** GPU nodes. Karpenter removes them when no GPU pod is
+pending, so an idle cluster runs no GPU cost.
+
+**What does not:** the control plane, NAT gateways, and any EBS volume that
+outlives its node. A cluster left up over a weekend with zero traffic still
+costs roughly $2-3/day.
+
+### Working safely
+
+1. **Set the budget alarm first**, before the first apply — `modules/cost-guardrails`
+   creates an AWS Budget with alerts at 50/80/100 percent. Confirm the SNS
+   subscription email or the alerts go nowhere. Note that budget alerts
+   *notify*, they do not cap: AWS has no hard spending limit.
+2. **Time-box the run.** Apply, benchmark, destroy in one sitting. A full
+   benchmark session is one to two hours, so roughly $2-5 all in.
+3. **Always finish with `bash scripts/teardown.sh`.** It destroys the stack
+   and then checks for orphans Terraform does not track — Karpenter creates
+   nodes outside the state file, and a partly failed destroy can strand them.
+4. **Never leave a cluster up overnight** to "carry on tomorrow". Destroy and
+   re-apply; that is what the module is for.
+
+### Cheaper route to the same benchmark numbers
+
+If the goal is the results table rather than the Kubernetes machinery, skip
+EKS. A single `g5.xlarge` spot instance running vLLM directly gives you real
+tokens/sec, time-to-first-token and p95 latency for about **$0.35/hour** —
+under a dollar for a full benchmark, with no control-plane fee and no NAT
+gateway.
+
+Those numbers are equally valid for the results table, as long as the method
+section says how they were measured. The EKS module is about reproducible
+provisioning; the benchmark is about model throughput. They can be proven
+separately.
+
 
 ## Design decisions
 
@@ -137,6 +193,7 @@ the failure looks like a crash rather than a config error.
 - [ ] kube-prometheus-stack, DCGM exporter, Grafana dashboards
 - [ ] Benchmark harness and published results
 - [x] Cost estimation output (static table; Pricing API later)
+- [x] Budget alarms and teardown-with-orphan-check script
 - [ ] Terratest coverage
 
 ## CI
