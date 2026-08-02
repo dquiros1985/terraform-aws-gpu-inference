@@ -62,6 +62,24 @@ data "aws_subnets" "gpu_capable" {
   }
 }
 
+# Preflight: a new AWS account has a GPU quota of ZERO, and the failure is
+# opaque. RunInstances returns "MaxSpotInstanceCountExceeded", which reads like
+# "you have too many running" when the truth is "you are allowed none". Check
+# during plan instead, so nobody burns a credential export, a security group
+# and a failed apply to discover it.
+#
+# The quota is measured in vCPUs. This checks only that it is non-zero, which
+# is the case that actually bites; a quota of 4 with a 8-vCPU instance type
+# would still fail at apply.
+#
+# Requires servicequotas:GetServiceQuota. Set preflight_quota_check = false if
+# the caller does not have it.
+data "aws_servicequotas_service_quota" "gpu_spot" {
+  count        = var.preflight_quota_check ? 1 : 0
+  service_code = "ec2"
+  quota_code   = "L-3819A6DF" # All G and VT Spot Instance Requests
+}
+
 # The Deep Learning AMI ships the NVIDIA driver, CUDA and Docker already.
 # Installing those from a bare AMI burns 15 minutes of paid GPU time per run.
 data "aws_ami" "dlami" {
@@ -138,6 +156,11 @@ resource "aws_instance" "bench" {
     precondition {
       condition     = length(data.aws_subnets.gpu_capable.ids) > 0
       error_message = "No subnet in the default VPC of ${var.region} sits in an Availability Zone that offers ${var.instance_type}. Pick another region, or another instance type."
+    }
+
+    precondition {
+      condition     = !var.preflight_quota_check || one(data.aws_servicequotas_service_quota.gpu_spot[*].value) > 0
+      error_message = "EC2 quota 'All G and VT Spot Instance Requests' (L-3819A6DF) is 0 vCPUs in ${var.region}: no G-family GPU instance can launch here at any size. This is an account limit, not a configuration error. Request an increase in Service Quotas, wait for approval, then re-run."
     }
   }
 

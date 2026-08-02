@@ -43,6 +43,18 @@ variable "allowed_cidr" {
   default     = "127.0.0.1/32"
 }
 
+variable "preflight_quota_check" {
+  description = <<-EOT
+    Check the account's G-family spot quota during plan, before anything is
+    created. A fresh AWS account is allowed zero GPU vCPUs and the runtime
+    error for that is misleading, so this turns it into a readable plan-time
+    failure. Needs servicequotas:GetServiceQuota - set false if the caller
+    lacks that permission.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "key_name" {
   description = "Existing EC2 key pair for SSH. Optional."
   type        = string
