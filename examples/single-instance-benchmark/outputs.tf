@@ -2,6 +2,11 @@ output "public_ip" {
   value = aws_instance.bench.public_ip
 }
 
+output "availability_zone" {
+  description = "Which AZ was selected. Only AZs that actually offer this instance type are considered."
+  value       = aws_instance.bench.availability_zone
+}
+
 output "endpoint" {
   value = "http://${aws_instance.bench.public_ip}:8000"
 }

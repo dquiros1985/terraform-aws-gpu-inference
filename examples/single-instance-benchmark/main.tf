@@ -33,10 +33,32 @@ data "aws_vpc" "default" {
   default = true
 }
 
-data "aws_subnets" "default" {
+# Not every Availability Zone offers every instance type, and the default VPC
+# has a subnet in every AZ. In us-west-2 the default VPC includes us-west-2d,
+# which does not offer g5 at all - so taking subnets[0] blindly is a coin flip
+# that fails with "Unsupported ... in your requested Availability Zone", and it
+# fails at RunInstances, after the security group already exists.
+#
+# Ask AWS which AZs actually offer this instance type, then only consider
+# subnets that sit in one of them.
+data "aws_ec2_instance_type_offerings" "gpu" {
+  filter {
+    name   = "instance-type"
+    values = [var.instance_type]
+  }
+
+  location_type = "availability-zone"
+}
+
+data "aws_subnets" "gpu_capable" {
   filter {
     name   = "vpc-id"
     values = [data.aws_vpc.default.id]
+  }
+
+  filter {
+    name   = "availability-zone"
+    values = data.aws_ec2_instance_type_offerings.gpu.locations
   }
 }
 
@@ -109,8 +131,15 @@ locals {
 resource "aws_instance" "bench" {
   ami           = data.aws_ami.dlami.id
   instance_type = var.instance_type
-  subnet_id     = data.aws_subnets.default.ids[0]
+  subnet_id     = data.aws_subnets.gpu_capable.ids[0]
   key_name      = var.key_name
+
+  lifecycle {
+    precondition {
+      condition     = length(data.aws_subnets.gpu_capable.ids) > 0
+      error_message = "No subnet in the default VPC of ${var.region} sits in an Availability Zone that offers ${var.instance_type}. Pick another region, or another instance type."
+    }
+  }
 
   vpc_security_group_ids = [aws_security_group.bench.id]
 
