@@ -1,5 +1,7 @@
 # terraform-aws-gpu-inference
 
+![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-FFDD00?style=flat&logo=buymeacoffee&logoColor=black)
+
 Terraform module that stands up GPU-backed LLM inference on EKS: cluster, GPU
 capacity, vLLM serving, autoscaling and observability. One `terraform apply`,
 one `terraform destroy`.
@@ -9,6 +11,49 @@ one `terraform destroy`.
 > observability are still stubs, and nothing here has been applied against a
 > live cluster yet. The results table below is empty on purpose — I do not
 > publish numbers I have not measured. See [Roadmap](#roadmap).
+
+## What this does, in plain language
+
+Running a large language model on your own hardware normally means a person
+clicking through the AWS console, installing GPU drivers by hand, starting a
+server, and hoping they remember to switch it all off. This repository replaces
+that with code you run.
+
+There are **two separate paths**, because they answer two different questions.
+
+**Path A — the full stack on Kubernetes.** Answers *"can this be rebuilt
+identically, by anyone, on demand?"* Costs about $73/month minimum, because a
+Kubernetes control plane bills around the clock.
+
+**Path B — one machine, for benchmarking.** Answers *"how fast is the model,
+really?"* Costs about $0.35/hour and switches itself off. No Kubernetes.
+
+### The pieces, and what each one is for
+
+| Piece | What it actually does |
+| --- | --- |
+| `modules/gpu-nodegroup` | Rents GPU machines from AWS **only while something needs one**, and hands them back when the work stops. Uses Karpenter, which tries a list of machine types in order — GPUs are often sold out in a region, so asking for one specific type means getting nothing. |
+| NVIDIA GPU Operator | Installs and maintains the GPU drivers **automatically**. Baking drivers into a machine image works until the image updates, then breaks quietly at 2am. |
+| `modules/vllm-serving` | Runs **vLLM**, the program that actually loads the model and answers questions. It speaks the same API shape as OpenAI, so existing client code works unchanged. *(Still a stub.)* |
+| Autoscaling | Adds more copies when requests pile up, removes them when the queue empties. It watches the **queue**, not CPU — CPU means almost nothing for a GPU workload, and scaling on it gives you something both expensive and slow. |
+| `modules/observability` | Collects the numbers that matter: tokens per second, how long until the first word appears, slow-request outliers, and how hard the GPU is working. Prometheus + Grafana + NVIDIA's DCGM exporter. *(Still a stub.)* |
+| `modules/cost-guardrails` | Sets up an **AWS budget alarm** that emails you at 50%, 80% and 100% of a limit you choose. Set this up before your first apply. Note it **warns**, it does not stop spending — AWS has no hard cap. |
+| `scripts/teardown.sh` | Destroys everything, then **checks that it really is gone**. Terraform does not know about machines Karpenter created on its own, and a destroy that fails halfway can leave things running and billing. This looks for those leftovers by hand. |
+| `examples/single-instance-benchmark` | Path B. One GPU machine, running vLLM directly, that **deletes itself**. See below. |
+
+### How the benchmark machine switches itself off
+
+The realistic failure mode is not a bug. It is forgetting. So there are three
+independent mechanisms, and any one of them is enough:
+
+1. **A countdown started at boot.** The machine schedules its own shutdown
+   before it does anything else, so it fires even if the model never loads.
+2. **Shutdown means delete, not pause.** A paused machine keeps charging for its
+   disk forever. This one is configured to destroy itself instead.
+3. **It is rented as a one-time spot instance.** AWS may reclaim it early, and
+   when it does, nothing restarts it.
+
+You can also just run `terraform destroy` the moment you have your numbers.
 
 ## Why this exists
 
@@ -77,24 +122,51 @@ A complete example lives in [`examples/complete`](examples/complete).
 
 ## Results
 
-Measured on the reference configuration. **Empty until I have run the
-benchmark myself** — see the note at the top.
+**Empty until I have run it myself.** I do not publish numbers I have not
+measured, and I do not publish a number from a tool that cannot measure it.
+
+### Path B — single instance (`examples/single-instance-benchmark`)
+
+These are the fields `benchmark.sh` can actually produce.
 
 | Metric | Value |
 | --- | --- |
 | Model / quantization | — |
 | GPU / instance type | — |
-| Tokens/sec (single stream) | — |
-| Tokens/sec (16 concurrent) | — |
-| Time to first token, p50 / p95 | — |
-| End-to-end latency, p50 / p95 | — |
-| GPU utilisation under load | — |
-| Cost per 1M output tokens | — |
-| Cold start (node → ready) | — |
+| Tokens/sec, single stream | — |
+| Tokens/sec, 16 concurrent (upper bound) | — |
+| Time from boot to first successful request | — |
+| Spot price paid, per hour | — |
+| Cost per 1M output tokens *(derived)* | — |
 
-Method: k6 against the OpenAI-compatible endpoint, fixed prompt distribution,
-warm cache excluded from the first window. Raw output will be committed under
+Method: `benchmark.sh` against the vLLM OpenAI-compatible endpoint. One
+fixed-prompt request at `temperature=0` for the single-stream figure, then 16
+parallel requests timed as one batch. Raw terminal output committed under
 `docs/benchmarks/` so the numbers can be checked rather than taken on trust.
+
+Two honest caveats, stated here rather than buried:
+
+- **The 16-concurrent figure is an upper bound, not a measurement.** It divides
+  total possible tokens by wall-clock time, and not every request reaches
+  `max_tokens`. Real aggregate throughput is lower.
+- **Cost per 1M tokens is arithmetic, not billing.** It is the measured
+  throughput against the spot price paid. Confirm against Cost Explorer before
+  quoting it anywhere that matters.
+
+### Percentiles and time-to-first-token — not yet measured
+
+`benchmark.sh` measures wall-clock for a batch. It does **not** produce a
+latency distribution, so there is nothing here to report yet.
+
+| Metric | Value | Needs |
+| --- | --- | --- |
+| Time to first token, p50 / p95 | — | k6 or equivalent, streaming enabled |
+| End-to-end latency, p50 / p95 | — | k6 or equivalent |
+| GPU utilisation under load | — | DCGM exporter (Path A) |
+
+A single request timed with `curl` is a sample of one. Publishing a p95 from it
+would be inventing a number, so these rows stay empty until there is a load
+generator behind them.
 
 ## Cost — read before applying
 
